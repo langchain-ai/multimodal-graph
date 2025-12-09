@@ -56,7 +56,7 @@ async def research_terminology(state: State) -> State:
     You will be given a question. Please generate a list of Google search queries that will explain what data from a 10-K filing is needed to answer the question.
     These queries should pull any formulas, accounting terms, or other financial terminology that is needed to answer the question.
 
-    Please return 5 queries maximum. 
+    Please return 3 queries maximum. 
     Make sure queries are diverse and do not ask for the same information.
     """
     structured_llm = llm.with_structured_output(Query)
@@ -77,7 +77,6 @@ async def search_web(state: State) -> State:
 async def analyze_pdf_with_llm(
     question: str,
     compiled_context: str,
-    pdf_bytes: bytes,
     pdf_attachment: Attachment  # Pass attachment as parameter
 ) -> str:
     """Analyze PDF with LLM - attachment will be traced automatically"""
@@ -98,8 +97,8 @@ async def analyze_pdf_with_llm(
     {compiled_context}
     </context>
     """
-    
-    pdf_b64 = base64.b64encode(pdf_bytes).decode("utf-8")
+
+    pdf_b64 = base64.b64encode(pdf_attachment.data).decode("utf-8")
     
     # Create multimodal message with PDF file content block
     human_message = HumanMessage(
@@ -140,7 +139,6 @@ async def process_pdf(state: State) -> State:
     answer = await analyze_pdf_with_llm(
         question=question,
         compiled_context=compiled_context,
-        pdf_bytes=pdf_bytes,
         pdf_attachment=pdf_attachment
     )
     
