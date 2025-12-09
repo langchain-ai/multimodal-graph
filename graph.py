@@ -11,6 +11,9 @@ from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import AnyMessage, add_messages
 from langgraph.types import Send
 from tavily import AsyncTavilyClient
+from langsmith import traceable
+from langsmith.schemas import Attachment
+from pathlib import Path
 
 dotenv.load_dotenv()
 
@@ -69,11 +72,16 @@ async def search_web(state: State) -> State:
     context = "\n".join([result["content"] for result in search_results["results"]])
     return {"context": [context]}
 
-async def process_pdf(state: State) -> State:
-    question = state["question"]
-    pdf_url = state["pdf_url"]
-    compiled_context = "\n".join(state["context"])
 
+@traceable(dangerously_allow_filesystem=True)
+async def analyze_pdf_with_llm(
+    question: str,
+    compiled_context: str,
+    pdf_bytes: bytes,
+    pdf_attachment: Attachment  # Pass attachment as parameter
+) -> str:
+    """Analyze PDF with LLM - attachment will be traced automatically"""
+    
     system_prompt = f"""
     You are an expert financial analyst. You will be given a question and a pdf.
     Use the pdf to answer the question. 
@@ -90,29 +98,53 @@ async def process_pdf(state: State) -> State:
     {compiled_context}
     </context>
     """
+    
+    pdf_b64 = base64.b64encode(pdf_bytes).decode("utf-8")
+    
+    # Create multimodal message with PDF file content block
+    human_message = HumanMessage(
+        content=[
+            {"type": "text", "text": "Here's the 10-k filing you should analyze."},
+            {
+                "type": "file",
+                "source_type": "base64",
+                "data": pdf_b64,
+                "mime_type": "application/pdf",
+                "filename": "10k.pdf",
+            },
+        ]
+    )
 
+    # Invoke the model
+    response = await llm.ainvoke([SystemMessage(content=system_prompt), human_message])
+    return response.content
+
+
+async def process_pdf(state: State) -> State:
+    question = state["question"]
+    pdf_url = state["pdf_url"]
+    compiled_context = "\n".join(state["context"])
+
+    # Download PDF
     async with httpx.AsyncClient() as client:
         response = await client.get(pdf_url)
         pdf_bytes = response.content
-        pdf_b64 = base64.b64encode(pdf_bytes).decode("utf-8")
-
-    # Create multimodal message with PDF file content block
-        human_message = HumanMessage(
-            content=[
-                {"type": "text", "text": "Here's the 10-k filing you should analyze."},
-                {
-                    "type": "file",
-                    "source_type": "base64",
-                    "data": pdf_b64,
-                    "mime_type": "application/pdf",
-                    "filename": "10k.pdf",
-                },
-            ]
-        )
-
-        # Invoke the model
-        response = await llm.ainvoke([SystemMessage(content=system_prompt), human_message])
-    return {"answer": response.content, "messages": [response]}
+    
+    # Create attachment for tracing
+    pdf_attachment = Attachment(
+        mime_type="application/pdf",
+        data=pdf_bytes
+    )
+    
+    # Call traceable function with attachment as parameter
+    answer = await analyze_pdf_with_llm(
+        question=question,
+        compiled_context=compiled_context,
+        pdf_bytes=pdf_bytes,
+        pdf_attachment=pdf_attachment
+    )
+    
+    return {"answer": answer, "messages": [AIMessage(content=answer)]}
 
 
 # Define the graph

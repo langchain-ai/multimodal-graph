@@ -2,6 +2,7 @@ httpx
 langchain
 langgraph
 langgraph-cli[inmem]
+langsmith
 langchain-community
 langchain-openai
 tavily-python
